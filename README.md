@@ -7,11 +7,29 @@ This repository contains a reusable GitHub Actions workflow for deploying Larave
 To use this workflow in your Laravel repository:
 
 ```yaml
+name: Deploy
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
 jobs:
   deploy:
     uses: TheYGSGroup/workflows/.github/workflows/deploy.yml@v0.0.1
     secrets: inherit
 ```
+
+The workflow will automatically determine whether to deploy based on the branch configuration in your `gs_develop/config/deploy.yml` file. The environment options in the workflow_dispatch should match those defined in your config file.
 
 @TODO JAKE FINISH DOCUMENTING
 
