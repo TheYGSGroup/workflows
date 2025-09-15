@@ -1,0 +1,509 @@
+name: Deploy Laravel Application
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - '.gitattributes'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+jobs:
+  check_branch:
+    name: Check if branch should be deployed
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      environment: ${{ steps.check.outputs.environment }}
+      branch: ${{ steps.check.outputs.branch }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check branch against config
+        id: check
+        run: |
+          BRANCH_NAME="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # For manual triggers, use the selected environment
+            SELECTED_ENV="${{ github.event.inputs.environment }}"
+            # Find the branch name that maps to this environment
+            BRANCH_MAPPING=$(grep -A 100 "environments:" gs_develop/config/deploy.yml | grep -v "environments:" | grep -E "^\s+\w+:" | sed 's/^\s\+//g')
+            
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                BRANCH=$(echo "$line" | cut -d ':' -f 1 | tr -d ' ')
+                ENV=$(echo "$line" | cut -d ':' -f 2 | tr -d ' ')
+                if [ "$ENV" == "$SELECTED_ENV" ]; then
+                  BRANCH_NAME="$BRANCH"
+                  break
+                fi
+              fi
+            done <<< "$BRANCH_MAPPING"
+            
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "environment=$SELECTED_ENV" >> $GITHUB_OUTPUT
+            echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+            echo "Manual deployment to environment: $SELECTED_ENV (branch: $BRANCH_NAME)"
+          else
+            # For push events, check if the branch is in the config
+            BRANCH_MAPPING=$(grep -A 100 "environments:" gs_develop/config/deploy.yml | grep -v "environments:" | grep -E "^\s+\w+:" | sed 's/^\s\+//g')
+            SHOULD_DEPLOY="false"
+            ENVIRONMENT=""
+            
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                BRANCH=$(echo "$line" | cut -d ':' -f 1 | tr -d ' ')
+                ENV=$(echo "$line" | cut -d ':' -f 2 | tr -d ' ')
+                if [ "$BRANCH" == "$BRANCH_NAME" ]; then
+                  SHOULD_DEPLOY="true"
+                  ENVIRONMENT="$ENV"
+                  break
+                fi
+              fi
+            done <<< "$BRANCH_MAPPING"
+            
+            echo "should_deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+            echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+            echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+            
+            if [ "$SHOULD_DEPLOY" == "true" ]; then
+              echo "Branch $BRANCH_NAME will be deployed to environment: $ENVIRONMENT"
+            else
+              echo "Branch $BRANCH_NAME is not configured for deployment"
+            fi
+          fi
+
+  deploy:
+    name: Deploy to ${{ needs.check_branch.outputs.environment }}
+    runs-on: ubuntu-latest
+    container: 
+      image: node:20-alpine
+    needs: check_branch
+    if: needs.check_branch.outputs.should_deploy == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Install basic tools
+        run: |
+          echo "Installing basic tools..."
+          apk add --no-cache bash git openssh-client rsync coreutils findutils grep
+
+      - name: Build assets
+        id: build_assets
+        run: |
+          echo "Building assets in container..."
+          
+          # Install all dependencies including dev dependencies
+          echo "Installing dependencies..."
+          npm install
+          
+          # Install laravel-vite-plugin explicitly
+          echo "Installing laravel-vite-plugin explicitly..."
+          npm install --save-dev laravel-vite-plugin
+          
+          # List installed packages to verify
+          echo "Verifying installed packages..."
+          npm list laravel-vite-plugin
+          
+          # Build assets
+          echo "Building assets..."
+          npm run build
+          
+          # Verify build output
+          if [ -d "public/build" ]; then
+            echo "Build successful! Assets created in public/build:"
+            ls -la public/build/
+            echo "build_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "Error: Build directory not found after build"
+            echo "build_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+        env:
+          NODE_ENV: development # Changed to development to ensure dev dependencies are installed
+          VITE_APP_ENV: production
+
+      - name: Create fallback build directory
+        if: steps.build_assets.outcome == 'failure'
+        run: |
+          echo "Build failed, creating fallback build directory..."
+          mkdir -p public/build/assets
+          
+          # Create a simple manifest file
+          cat <<EOF > public/build/manifest.json
+          {
+            "resources/css/app.css": {
+              "file": "assets/app-4ed993c7.css",
+              "isEntry": true,
+              "src": "resources/css/app.css"
+            },
+            "resources/js/app.js": {
+              "file": "assets/app-4ed993c7.js",
+              "isEntry": true,
+              "src": "resources/js/app.js"
+            }
+          }
+          EOF
+          
+          # Create empty asset files
+          touch public/build/assets/app-4ed993c7.css
+          touch public/build/assets/app-4ed993c7.js
+          
+          echo "Fallback build directory created successfully"
+
+      - name: Setup SSH
+        run: |
+          echo "Setting up SSH..."
+          # Create SSH directory in the container's home directory
+          mkdir -p /home/node/.ssh
+          
+          # Write private key to file
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /home/node/.ssh/id_rsa
+          chmod 600 /home/node/.ssh/id_rsa
+          
+          # Configure SSH
+          cat > /home/node/.ssh/config << EOF
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile=/dev/null
+            IdentityFile /home/node/.ssh/id_rsa
+          EOF
+          chmod 600 /home/node/.ssh/config
+          
+          # Debug SSH configuration
+          echo "SSH configuration:"
+          ls -la /home/node/.ssh/
+          
+          # Export SSH key path for later steps
+          echo "SSH_KEY_PATH=/home/node/.ssh/id_rsa" >> $GITHUB_ENV
+          
+          # Test SSH connection without actually connecting
+          echo "Testing SSH configuration..."
+          ssh -i /home/node/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -T -v -p ${{ secrets.PORT || 22 }} ${{ secrets.USER }}@${{ secrets.HOST }} 2>&1 || echo "SSH debug completed"
+
+      - name: Load deployment configuration
+        id: config
+        run: |
+          # Get environment and branch from previous job
+          ENVIRONMENT="${{ needs.check_branch.outputs.environment }}"
+          BRANCH_NAME="${{ needs.check_branch.outputs.branch }}"
+          
+          # Parse YAML file to get release retention
+          RELEASE_RETENTION=$(grep "release_retention:" gs_develop/config/deploy.yml | cut -d ':' -f 2 | tr -d ' ')
+          
+          # Set outputs
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "release_retention=$RELEASE_RETENTION" >> $GITHUB_OUTPUT
+          
+          # Debug info
+          echo "Deploying branch $BRANCH_NAME to environment $ENVIRONMENT"
+          echo "Release retention: $RELEASE_RETENTION"
+
+      - name: Setup deployment directories
+        id: setup_dirs
+        run: |
+          # Set variables
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          BASE_PATH="${{ secrets.PATH }}"
+          ENV_PATH="${BASE_PATH}/sites/${{ needs.check_branch.outputs.branch }}"
+          BUILD_PATH="${ENV_PATH}/build"
+          RELEASES_PATH="${ENV_PATH}/releases"
+          SHARED_PATH="${ENV_PATH}/shared"
+          
+          # Store paths for later steps
+          echo "env_path=$ENV_PATH" >> $GITHUB_OUTPUT
+          echo "build_path=$BUILD_PATH" >> $GITHUB_OUTPUT
+          echo "releases_path=$RELEASES_PATH" >> $GITHUB_OUTPUT
+          echo "shared_path=$SHARED_PATH" >> $GITHUB_OUTPUT
+          
+          # Create required directories if they don't exist
+          echo "Creating required directories..."
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $BUILD_PATH $RELEASES_PATH $SHARED_PATH"
+          
+          # Check if .env file exists in shared directory
+          echo "Checking for .env file..."
+          ENV_CHECK=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -f ${SHARED_PATH}/.env ]; then echo 'exists'; else echo 'missing'; fi")
+          
+          if [ "$ENV_CHECK" == "missing" ]; then
+            echo "::error::.env file is missing in shared directory. Please create it before deploying."
+            exit 1
+          fi
+          
+          # Clear build directory
+          echo "Clearing build directory..."
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${BUILD_PATH}/* || true"
+
+      - name: Get next release number
+        id: release
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          RELEASES_PATH="${{ steps.setup_dirs.outputs.releases_path }}"
+          
+          # Find the latest release number
+          LAST_RELEASE=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ls -1 $RELEASES_PATH 2>/dev/null | grep -E '^[0-9]+$' | sort -n | tail -1 || echo 0")
+          NEXT_RELEASE=$((LAST_RELEASE + 1))
+          
+          echo "number=$NEXT_RELEASE" >> $GITHUB_OUTPUT
+          echo "path=${RELEASES_PATH}/${NEXT_RELEASE}" >> $GITHUB_OUTPUT
+          echo "Next release will be: $NEXT_RELEASE"
+
+      - name: Deploy code to build directory
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          BUILD_PATH="${{ steps.setup_dirs.outputs.build_path }}"
+          
+          # Create a temporary file for exclude patterns
+          EXCLUDE_FILE=$(mktemp)
+          
+          # Add default excludes
+          echo ".git" >> $EXCLUDE_FILE
+          echo ".github" >> $EXCLUDE_FILE
+          echo "node_modules" >> $EXCLUDE_FILE
+          echo "vendor" >> $EXCLUDE_FILE
+          echo "storage/framework" >> $EXCLUDE_FILE
+          echo "storage/logs" >> $EXCLUDE_FILE
+          echo "storage/app" >> $EXCLUDE_FILE
+          
+          # Add excludes from config
+          if grep -q "exclude_files:" gs_develop/config/deploy.yml; then
+            grep -A 20 "exclude_files:" gs_develop/config/deploy.yml | grep -v "exclude_files:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g' >> $EXCLUDE_FILE
+          fi
+          
+          # Debug: show exclude file contents
+          echo "Exclude patterns:"
+          cat $EXCLUDE_FILE
+          
+          # Ensure public/build directory exists on the server
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${BUILD_PATH}/public/build"
+          
+          # First, sync the repository without the build directory
+          rsync -avz --delete -e "ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT" \
+            --exclude-from=$EXCLUDE_FILE \
+            --exclude="public/build" \
+            ./ $USER@$HOST:$BUILD_PATH/
+          
+          # Then, sync just the build directory separately to ensure it's transferred
+          if [ -d "public/build" ]; then
+            echo "Syncing build directory..."
+            rsync -avz -e "ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT" \
+              public/build/ $USER@$HOST:$BUILD_PATH/public/build/
+          fi
+          
+          # Clean up
+          rm $EXCLUDE_FILE
+
+      - name: Install dependencies and build assets
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          BUILD_PATH="${{ steps.setup_dirs.outputs.build_path }}"
+          SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
+          
+          # Create storage directories and set permissions
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && mkdir -p bootstrap/cache storage/framework/{cache,sessions,views} storage/logs"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && chmod -R 775 bootstrap/cache storage"
+          
+          # Temporarily copy .env file from shared directory to build directory
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cp ${SHARED_PATH}/.env ${BUILD_PATH}/.env"
+          
+          # Install Composer dependencies with --no-scripts to avoid running post-install scripts that might access the database
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts"
+          
+          # Generate autoload files without running discovery
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && composer dump-autoload --optimize"
+          
+          # Skip npm build as we've already built the assets in the GitHub runner
+          echo "Skipping npm build as assets were built in GitHub Actions"
+
+      - name: Create release directory
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          BUILD_PATH="${{ steps.setup_dirs.outputs.build_path }}"
+          RELEASE_PATH="${{ steps.release.outputs.path }}"
+          
+          # Create release directory and copy build
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $RELEASE_PATH && cp -R $BUILD_PATH/* $RELEASE_PATH/"
+
+      - name: Setup shared files and directories
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          RELEASE_PATH="${{ steps.release.outputs.path }}"
+          SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
+          
+          # Get shared files from config
+          SHARED_FILES=$(grep -A 100 "shared_files:" gs_develop/config/deploy.yml | grep -v "shared_files:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          
+          echo "Setting up shared files and directories..."
+          echo "Shared files/directories from config:"
+          echo "$SHARED_FILES"
+          
+          # Process each shared file/directory
+          echo "$SHARED_FILES" | while read -r FILE; do
+            if [ -n "$FILE" ]; then
+              echo "Processing shared item: $FILE"
+              
+              # Create directory structure in shared if it doesn't exist
+              DIR_PATH=$(dirname "$FILE")
+              ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${SHARED_PATH}/${DIR_PATH}"
+              
+              # Handle directory vs file differently
+              if [[ "$FILE" == */ ]] || [[ "$FILE" == "storage/app" ]] || [[ "$FILE" == "storage/logs" ]] || [[ "$FILE" == "storage/framework" ]]; then
+                # It's a directory - ensure it exists in shared
+                echo "Setting up directory: ${FILE}"
+                ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${SHARED_PATH}/${FILE}"
+                
+                # Remove the directory from release if it exists
+                ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${RELEASE_PATH}/${FILE}"
+                
+                # Create parent directory in release
+                ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $(dirname ${RELEASE_PATH}/${FILE})"
+                
+                # Create symlink from shared to release
+                echo "Creating symlink for directory: ${FILE}"
+                ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ln -sfn ${SHARED_PATH}/${FILE} ${RELEASE_PATH}/${FILE}"
+              else
+                # It's a file
+                # Check if the file exists in the release
+                FILE_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -e ${RELEASE_PATH}/${FILE} ]; then echo 'exists'; else echo 'missing'; fi")
+                
+                if [ "$FILE_EXISTS" == "exists" ]; then
+                  # Remove the file from release
+                  ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${RELEASE_PATH}/${FILE}"
+                fi
+                
+                # Create the shared file if it doesn't exist (except .env which was checked earlier)
+                if [ "$FILE" != ".env" ]; then
+                  SHARED_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -e ${SHARED_PATH}/${FILE} ]; then echo 'exists'; else echo 'missing'; fi")
+                  
+                  if [ "$SHARED_EXISTS" == "missing" ]; then
+                    # Copy from release to shared (if it existed in release)
+                    if [ "$FILE_EXISTS" == "exists" ]; then
+                      echo "Copying ${FILE} from release to shared directory"
+                      ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cp -R ${RELEASE_PATH}/${FILE} ${SHARED_PATH}/${FILE}"
+                    else
+                      # Create empty file
+                      echo "Creating empty file: ${SHARED_PATH}/${FILE}"
+                      ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $(dirname ${SHARED_PATH}/${FILE}) && touch ${SHARED_PATH}/${FILE}"
+                    fi
+                  fi
+                fi
+                
+                # Ensure parent directory exists in release
+                ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $(dirname ${RELEASE_PATH}/${FILE})"
+                
+                # Create symlink from shared to release
+                echo "Creating symlink for file: ${FILE}"
+                ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ln -sf ${SHARED_PATH}/${FILE} ${RELEASE_PATH}/${FILE}"
+              fi
+            fi
+          done
+          
+          # Verify symlinks
+          echo "Verifying symlinks for important directories..."
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ls -la ${RELEASE_PATH}/storage/"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ls -la ${RELEASE_PATH}/storage/app/ || echo 'storage/app not found'"
+
+      - name: Check and generate APP_KEY if needed
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          RELEASE_PATH="${{ steps.release.outputs.path }}"
+          SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
+          
+          # Check if APP_KEY exists in .env
+          APP_KEY_CHECK=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "grep -E '^APP_KEY=' ${SHARED_PATH}/.env | grep -v 'APP_KEY=$' | grep -v 'APP_KEY=base64:' || echo 'missing'")
+          
+          if [ "$APP_KEY_CHECK" == "missing" ]; then
+            echo "APP_KEY not found or empty, generating new key"
+            ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && php artisan key:generate --force"
+          else
+            echo "APP_KEY already exists in .env file"
+          fi
+
+      - name: Run post-deployment commands
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          RELEASE_PATH="${{ steps.release.outputs.path }}"
+          
+          # Get post-deploy commands from config
+          POST_DEPLOY=$(grep -A 20 "post_deploy:" gs_develop/config/deploy.yml | grep -v "post_deploy:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          
+          # Run each command
+          echo "$POST_DEPLOY" | while read -r CMD; do
+            if [ -n "$CMD" ]; then
+              echo "Running: $CMD"
+              ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && $CMD"
+              
+              # Check command status
+              if [ $? -ne 0 ]; then
+                echo "Warning: Command '$CMD' returned non-zero exit code, but continuing deployment"
+              fi
+            fi
+          done
+
+      - name: Update current symlink
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          RELEASE_PATH="${{ steps.release.outputs.path }}"
+          ENV_PATH="${{ steps.setup_dirs.outputs.env_path }}"
+          
+          # Create or update the current/www symlink
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${ENV_PATH}/current && ln -sfn $RELEASE_PATH ${ENV_PATH}/current/www"
+          
+          # Try to set ownership on the public directory (non-recursive) but continue on error
+          echo "Attempting to set public directory permissions..."
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "chown $USER:nobody ${RELEASE_PATH}/public || true"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "chmod 775 ${RELEASE_PATH}/public || true"
+          
+          # Set permissions for key files that need to be writable
+          echo "Setting permissions for key files..."
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "chmod -R 775 ${RELEASE_PATH}/bootstrap/cache || true"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "chmod -R 775 ${RELEASE_PATH}/storage || true"
+          
+          echo "Deployment successful! Current symlink updated to release ${{ steps.release.outputs.number }}"
+
+      - name: Cleanup old releases
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          RELEASES_PATH="${{ steps.setup_dirs.outputs.releases_path }}"
+          RELEASE_RETENTION="${{ steps.config.outputs.release_retention }}"
+          
+          # List all releases, keep only the newest N (based on release_retention)
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASES_PATH && ls -1 | grep -E '^[0-9]+$' | sort -n | head -n -$RELEASE_RETENTION | xargs -I{} rm -rf {}"
+          
+          echo "Old releases cleaned up, keeping the newest $RELEASE_RETENTION releases" 
