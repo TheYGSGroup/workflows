@@ -31,8 +31,6 @@ jobs:
 
 The workflow will automatically determine whether to deploy based on the branch configuration in your `gs_develop/config/deploy.yml` file. The environment options in the workflow_dispatch should match those defined in your config file.
 
-@TODO JAKE FINISH DOCUMENTING
-
 ## Development Guidelines
 
 ### Creating a New Release
@@ -78,3 +76,21 @@ jobs:
 ```
 
 **Note:** Using the main branch is not recommended for production environments as it may contain breaking changes.
+
+## Required Secrets
+
+The workflow requires the following secrets to be configured in your GitHub repository:
+
+- `SSH_PRIVATE_KEY`: The SSH private key used to connect to the deployment server
+- `HOST`: The hostname or IP address of the deployment server
+- `USER`: The SSH username for connecting to the deployment server
+- `PATH`: The base path on the server where deployments will be stored
+- `PORT`: (Optional) The SSH port number, defaults to 22 if not specified
+
+## Security Considerations
+
+When contributing to or using this workflow, please keep the following security considerations in mind:
+
+- The workflow disables SSH StrictHostKeyChecking to simplify deployments. In production environments, consider implementing more secure SSH configurations.
+- Never commit sensitive information such as private keys, passwords, or API tokens to this repository.
+- When forking or using this workflow, ensure your GitHub Actions secrets are properly configured and have appropriate access restrictions.
