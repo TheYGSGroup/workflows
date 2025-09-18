@@ -375,13 +375,25 @@ jobs:
           echo "Shared files/directories from config:"
           cat /tmp/shared_files.txt
           
-          # Process each shared file/directory
-          while IFS= read -r FILE || [ -n "$FILE" ]; do
+          # Debug: check file content and line count
+          echo "File content with line numbers:"
+          nl /tmp/shared_files.txt
+          
+          echo "Line count:"
+          wc -l /tmp/shared_files.txt
+          
+          echo "Processing shared files one by one..."
+          
+          # Try a different approach - use a counter and sed to extract each line
+          LINE_COUNT=$(wc -l < /tmp/shared_files.txt)
+          for i in $(seq 1 $LINE_COUNT); do
+            FILE=$(sed -n "${i}p" /tmp/shared_files.txt)
+            
             if [ -n "$FILE" ]; then
               # Remove any trailing slashes for consistency
               FILE=${FILE%/}
               
-              echo "Processing shared item: $FILE"
+              echo "Processing shared item $i of $LINE_COUNT: $FILE"
               
               # Skip public/storage if storage:link is in post-deploy commands
               if [ "$FILE" == "public/storage" ] && [ -n "$STORAGE_LINK_CMD" ]; then
@@ -443,7 +455,7 @@ jobs:
                 ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ln -sf ${SHARED_PATH}/${FILE} ${RELEASE_PATH}/${FILE}"
               fi
             fi
-          done < /tmp/shared_files.txt
+          done
           
           # Verify symlinks
           echo "Verifying symlinks for important directories..."
@@ -492,13 +504,25 @@ jobs:
           echo "Post-deploy commands to run:"
           cat /tmp/post_deploy_commands.txt
           
-          # Run each command individually
-          while IFS= read -r CMD || [ -n "$CMD" ]; do
+          # Debug: check file content and line count
+          echo "File content with line numbers:"
+          nl /tmp/post_deploy_commands.txt
+          
+          echo "Line count:"
+          wc -l /tmp/post_deploy_commands.txt
+          
+          echo "Executing commands one by one..."
+          
+          # Try a different approach - use a counter and sed to extract each line
+          LINE_COUNT=$(wc -l < /tmp/post_deploy_commands.txt)
+          for i in $(seq 1 $LINE_COUNT); do
+            CMD=$(sed -n "${i}p" /tmp/post_deploy_commands.txt)
+            
             if [ -n "$CMD" ]; then
               # Remove surrounding quotes if present
               CMD=$(echo "$CMD" | sed 's/^"//;s/"$//')
               
-              echo "Running command: $CMD"
+              echo "Running command $i of $LINE_COUNT: $CMD"
               ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && $CMD"
               CMD_STATUS=$?
               
@@ -508,7 +532,7 @@ jobs:
                 echo "Warning: Command '$CMD' returned non-zero exit code, but continuing deployment"
               fi
             fi
-          done < /tmp/post_deploy_commands.txt
+          done
 
       - name: Update current symlink
         run: |
