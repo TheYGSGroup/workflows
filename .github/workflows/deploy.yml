@@ -207,7 +207,7 @@ jobs:
           BRANCH_NAME="${{ needs.check_branch.outputs.branch }}"
           
           # Parse YAML file to get release retention
-          RELEASE_RETENTION=$(grep "release_retention:" gs_develop/config/deploy.yml | cut -d ':' -f 2 | tr -d ' ')
+          RELEASE_RETENTION=$(grep "^release_retention:" gs_develop/config/deploy.yml | cut -d ':' -f 2 | tr -d ' ')
           
           # Set outputs
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
@@ -360,11 +360,11 @@ jobs:
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
           
-          # Get shared files from config
-          SHARED_FILES=$(grep -A 100 "shared_files:" gs_develop/config/deploy.yml | grep -v "shared_files:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          # Get shared files from config - use a more precise pattern that stops at the next section
+          SHARED_FILES=$(sed -n '/^shared_files:/,/^[a-z_]*:/p' gs_develop/config/deploy.yml | grep -v "^shared_files:" | grep -v "^[a-z_]*:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
           
           # Check if storage:link is in post-deploy commands
-          STORAGE_LINK_CMD=$(grep -A 100 "post_deploy:" gs_develop/config/deploy.yml | grep -v "post_deploy:" | grep -E "storage:link")
+          STORAGE_LINK_CMD=$(sed -n '/^post_deploy:/,/^[a-z_]*:/p' gs_develop/config/deploy.yml | grep -v "^post_deploy:" | grep -v "^[a-z_]*:" | grep -E "storage:link")
           
           echo "Setting up shared files and directories..."
           echo "Shared files/directories from config:"
@@ -481,8 +481,8 @@ jobs:
           PORT="${{ secrets.PORT || 22 }}"
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           
-          # Get post-deploy commands from config
-          POST_DEPLOY=$(grep -A 100 "post_deploy:" gs_develop/config/deploy.yml | grep -v "post_deploy:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          # Get post-deploy commands from config - use a more precise pattern that stops at the next section
+          POST_DEPLOY=$(sed -n '/^post_deploy:/,/^[a-z_]*:/p' gs_develop/config/deploy.yml | grep -v "^post_deploy:" | grep -v "^[a-z_]*:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
           
           echo "Post-deploy commands to run:"
           echo "$POST_DEPLOY"
