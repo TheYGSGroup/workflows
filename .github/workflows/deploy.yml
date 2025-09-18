@@ -104,7 +104,12 @@ jobs:
       - name: Install basic tools
         run: |
           echo "Installing basic tools..."
-          apk add --no-cache bash git openssh-client rsync coreutils findutils grep
+          apk add --no-cache bash git openssh-client rsync coreutils findutils grep wget
+          
+          # Install yq for YAML parsing
+          echo "Installing yq for YAML parsing..."
+          wget https://github.com/mikefarah/yq/releases/download/v4.35.2/yq_linux_amd64 -O /usr/bin/yq
+          chmod +x /usr/bin/yq
 
       - name: Build assets
         id: build_assets
@@ -206,8 +211,8 @@ jobs:
           ENVIRONMENT="${{ needs.check_branch.outputs.environment }}"
           BRANCH_NAME="${{ needs.check_branch.outputs.branch }}"
           
-          # Parse YAML file to get release retention
-          RELEASE_RETENTION=$(grep "^release_retention:" gs_develop/config/deploy.yml | cut -d ':' -f 2 | tr -d ' ')
+          # Parse YAML file to get release retention using yq
+          RELEASE_RETENTION=$(yq '.release_retention' gs_develop/config/deploy.yml)
           
           # Set outputs
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
@@ -360,11 +365,11 @@ jobs:
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
           
-          # Get shared files from config - use a more precise pattern that stops at the next section
-          SHARED_FILES=$(sed -n '/^shared_files:/,/^[a-z_]*:/p' gs_develop/config/deploy.yml | grep -v "^shared_files:" | grep -v "^[a-z_]*:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          # Get shared files from config using yq
+          SHARED_FILES=$(yq -o=j -I=0 '.shared_files[]' gs_develop/config/deploy.yml)
           
           # Check if storage:link is in post-deploy commands
-          STORAGE_LINK_CMD=$(sed -n '/^post_deploy:/,/^[a-z_]*:/p' gs_develop/config/deploy.yml | grep -v "^post_deploy:" | grep -v "^[a-z_]*:" | grep -E "storage:link")
+          STORAGE_LINK_CMD=$(yq -o=j -I=0 '.post_deploy[]' gs_develop/config/deploy.yml | grep "storage:link")
           
           echo "Setting up shared files and directories..."
           echo "Shared files/directories from config:"
@@ -481,8 +486,8 @@ jobs:
           PORT="${{ secrets.PORT || 22 }}"
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           
-          # Get post-deploy commands from config - use a more precise pattern that stops at the next section
-          POST_DEPLOY=$(sed -n '/^post_deploy:/,/^[a-z_]*:/p' gs_develop/config/deploy.yml | grep -v "^post_deploy:" | grep -v "^[a-z_]*:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          # Get post-deploy commands from config using yq
+          POST_DEPLOY=$(yq -o=j -I=0 '.post_deploy[]' gs_develop/config/deploy.yml)
           
           echo "Post-deploy commands to run:"
           echo "$POST_DEPLOY"
