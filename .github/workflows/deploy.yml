@@ -425,26 +425,31 @@ jobs:
                 # Check if the file exists in the release
                 FILE_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -e ${RELEASE_PATH}/${FILE} ]; then echo 'exists'; else echo 'missing'; fi")
                 
+                # Check if the file exists in the shared directory
+                SHARED_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -e ${SHARED_PATH}/${FILE} ]; then echo 'exists'; else echo 'missing'; fi")
+                
+                # Remove the file from release if it exists (we'll create a symlink)
                 if [ "$FILE_EXISTS" == "exists" ]; then
-                  # Remove the file from release
                   ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${RELEASE_PATH}/${FILE}"
                 fi
                 
-                # Create the shared file if it doesn't exist (except .env which was checked earlier)
-                if [ "$FILE" != ".env" ]; then
-                  SHARED_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -e ${SHARED_PATH}/${FILE} ]; then echo 'exists'; else echo 'missing'; fi")
-                  
-                  if [ "$SHARED_EXISTS" == "missing" ]; then
-                    # Copy from release to shared (if it existed in release)
-                    if [ "$FILE_EXISTS" == "exists" ]; then
-                      echo "Copying ${FILE} from release to shared directory"
-                      ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cp -R ${RELEASE_PATH}/${FILE} ${SHARED_PATH}/${FILE}"
-                    else
-                      # Create empty file
+                # Handle file creation in shared directory
+                if [ "$SHARED_EXISTS" == "missing" ]; then
+                  if [ "$FILE_EXISTS" == "exists" ]; then
+                    # Copy from release to shared if it existed in release
+                    echo "Copying ${FILE} from release to shared directory"
+                    ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cp -R ${RELEASE_PATH}/${FILE} ${SHARED_PATH}/${FILE} || true"
+                  else
+                    # Create empty file if it doesn't exist in either location (except for .env)
+                    if [ "$FILE" != ".env" ]; then
                       echo "Creating empty file: ${SHARED_PATH}/${FILE}"
                       ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $(dirname ${SHARED_PATH}/${FILE}) && touch ${SHARED_PATH}/${FILE}"
+                    else
+                      echo "Warning: .env file not found in shared directory. This should be created before deployment."
                     fi
                   fi
+                else
+                  echo "File ${FILE} already exists in shared directory"
                 fi
                 
                 # Ensure parent directory exists in release
