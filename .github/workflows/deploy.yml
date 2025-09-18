@@ -365,18 +365,18 @@ jobs:
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
           
-          # Get shared files from config using yq
-          SHARED_FILES=$(yq eval '.shared_files[]' gs_develop/config/deploy.yml)
+          # Get shared files from config using yq and save to a temp file
+          yq eval '.shared_files[]' gs_develop/config/deploy.yml > /tmp/shared_files.txt
           
           # Check if storage:link is in post-deploy commands
           STORAGE_LINK_CMD=$(yq eval '.post_deploy[]' gs_develop/config/deploy.yml | grep "storage:link")
           
           echo "Setting up shared files and directories..."
           echo "Shared files/directories from config:"
-          echo "$SHARED_FILES"
+          cat /tmp/shared_files.txt
           
           # Process each shared file/directory
-          echo "$SHARED_FILES" | while read -r FILE; do
+          while IFS= read -r FILE || [ -n "$FILE" ]; do
             if [ -n "$FILE" ]; then
               # Remove any trailing slashes for consistency
               FILE=${FILE%/}
@@ -443,7 +443,7 @@ jobs:
                 ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ln -sf ${SHARED_PATH}/${FILE} ${RELEASE_PATH}/${FILE}"
               fi
             fi
-          done
+          done < /tmp/shared_files.txt
           
           # Verify symlinks
           echo "Verifying symlinks for important directories..."
@@ -486,14 +486,14 @@ jobs:
           PORT="${{ secrets.PORT || 22 }}"
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           
-          # Get post-deploy commands from config using yq
-          POST_DEPLOY=$(yq eval '.post_deploy[]' gs_develop/config/deploy.yml)
+          # Get post-deploy commands from config using yq and save to a temp file
+          yq eval '.post_deploy[]' gs_develop/config/deploy.yml > /tmp/post_deploy_commands.txt
           
           echo "Post-deploy commands to run:"
-          echo "$POST_DEPLOY"
+          cat /tmp/post_deploy_commands.txt
           
           # Run each command individually
-          echo "$POST_DEPLOY" | while read -r CMD; do
+          while IFS= read -r CMD || [ -n "$CMD" ]; do
             if [ -n "$CMD" ]; then
               # Remove surrounding quotes if present
               CMD=$(echo "$CMD" | sed 's/^"//;s/"$//')
@@ -508,7 +508,7 @@ jobs:
                 echo "Warning: Command '$CMD' returned non-zero exit code, but continuing deployment"
               fi
             fi
-          done
+          done < /tmp/post_deploy_commands.txt
 
       - name: Update current symlink
         run: |
