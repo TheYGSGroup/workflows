@@ -212,7 +212,7 @@ jobs:
           BRANCH_NAME="${{ needs.check_branch.outputs.branch }}"
           
           # Parse YAML file to get release retention using yq
-          RELEASE_RETENTION=$(yq '.release_retention' gs_develop/config/deploy.yml)
+          RELEASE_RETENTION=$(yq eval '.release_retention' gs_develop/config/deploy.yml)
           
           # Set outputs
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
@@ -366,10 +366,10 @@ jobs:
           SHARED_PATH="${{ steps.setup_dirs.outputs.shared_path }}"
           
           # Get shared files from config using yq
-          SHARED_FILES=$(yq -o=j -I=0 '.shared_files[]' gs_develop/config/deploy.yml)
+          SHARED_FILES=$(yq eval '.shared_files[]' gs_develop/config/deploy.yml)
           
           # Check if storage:link is in post-deploy commands
-          STORAGE_LINK_CMD=$(yq -o=j -I=0 '.post_deploy[]' gs_develop/config/deploy.yml | grep "storage:link")
+          STORAGE_LINK_CMD=$(yq eval '.post_deploy[]' gs_develop/config/deploy.yml | grep "storage:link")
           
           echo "Setting up shared files and directories..."
           echo "Shared files/directories from config:"
@@ -487,7 +487,7 @@ jobs:
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           
           # Get post-deploy commands from config using yq
-          POST_DEPLOY=$(yq -o=j -I=0 '.post_deploy[]' gs_develop/config/deploy.yml)
+          POST_DEPLOY=$(yq eval '.post_deploy[]' gs_develop/config/deploy.yml)
           
           echo "Post-deploy commands to run:"
           echo "$POST_DEPLOY"
@@ -495,6 +495,9 @@ jobs:
           # Run each command individually
           echo "$POST_DEPLOY" | while read -r CMD; do
             if [ -n "$CMD" ]; then
+              # Remove surrounding quotes if present
+              CMD=$(echo "$CMD" | sed 's/^"//;s/"$//')
+              
               echo "Running command: $CMD"
               ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && $CMD"
               CMD_STATUS=$?
