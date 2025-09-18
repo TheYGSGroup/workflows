@@ -1,22 +1,24 @@
 name: Deploy Laravel Application
 
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - '.gitignore'
-      - '.gitattributes'
-  workflow_dispatch:
+  workflow_call:
     inputs:
       environment:
-        description: 'Environment to deploy to'
-        required: true
+        description: 'Environment to deploy to (for manual triggers)'
+        required: false
         default: 'staging'
-        type: choice
-        options:
-          - production
-          - staging
-          - development
+        type: string
+    secrets:
+      SSH_PRIVATE_KEY:
+        required: true
+      HOST:
+        required: true
+      USER:
+        required: true
+      PATH:
+        required: true
+      PORT:
+        required: false
 
 jobs:
   check_branch:
@@ -35,9 +37,9 @@ jobs:
         id: check
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          if [ -n "${{ inputs.environment }}" ]; then
             # For manual triggers, use the selected environment
-            SELECTED_ENV="${{ github.event.inputs.environment }}"
+            SELECTED_ENV="${{ inputs.environment }}"
             # Find the branch name that maps to this environment
             BRANCH_MAPPING=$(grep -A 100 "environments:" gs_develop/config/deploy.yml | grep -v "environments:" | grep -E "^\s+\w+:" | sed 's/^\s\+//g')
             
