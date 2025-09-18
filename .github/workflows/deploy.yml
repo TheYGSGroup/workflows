@@ -444,6 +444,17 @@ jobs:
           echo "Verifying symlinks for important directories..."
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ls -la ${RELEASE_PATH}/storage/"
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ls -la ${RELEASE_PATH}/storage/app/ || echo 'storage/app not found'"
+          
+          # Double-check storage/app symlink
+          STORAGE_APP_CHECK=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -L ${RELEASE_PATH}/storage/app ]; then echo 'symlink'; elif [ -d ${RELEASE_PATH}/storage/app ]; then echo 'directory'; else echo 'missing'; fi")
+          
+          if [ "$STORAGE_APP_CHECK" == "missing" ]; then
+            echo "storage/app is missing, creating symlink..."
+            ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${RELEASE_PATH}/storage && ln -sfn ${SHARED_PATH}/storage/app ${RELEASE_PATH}/storage/app"
+          elif [ "$STORAGE_APP_CHECK" == "directory" ]; then
+            echo "storage/app is a directory, replacing with symlink..."
+            ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${RELEASE_PATH}/storage/app && ln -sfn ${SHARED_PATH}/storage/app ${RELEASE_PATH}/storage/app"
+          fi
 
       - name: Check and generate APP_KEY if needed
         run: |
@@ -471,20 +482,25 @@ jobs:
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           
           # Get post-deploy commands from config
-          POST_DEPLOY=$(grep -A 20 "post_deploy:" gs_develop/config/deploy.yml | grep -v "post_deploy:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
+          POST_DEPLOY=$(grep -A 100 "post_deploy:" gs_develop/config/deploy.yml | grep -v "post_deploy:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
           
-          # Run each command
-          echo "$POST_DEPLOY" | while read -r CMD; do
+          echo "Post-deploy commands to run:"
+          echo "$POST_DEPLOY"
+          
+          # Run each command individually
+          while IFS= read -r CMD; do
             if [ -n "$CMD" ]; then
-              echo "Running: $CMD"
+              echo "Running command: $CMD"
               ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && $CMD"
+              CMD_STATUS=$?
               
-              # Check command status
-              if [ $? -ne 0 ]; then
+              echo "Command exit status: $CMD_STATUS"
+              
+              if [ $CMD_STATUS -ne 0 ]; then
                 echo "Warning: Command '$CMD' returned non-zero exit code, but continuing deployment"
               fi
             fi
-          done
+          done <<< "$POST_DEPLOY"
 
       - name: Update current symlink
         run: |
