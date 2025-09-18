@@ -363,6 +363,9 @@ jobs:
           # Get shared files from config
           SHARED_FILES=$(grep -A 100 "shared_files:" gs_develop/config/deploy.yml | grep -v "shared_files:" | grep -E "^\s+-\s+" | sed 's/\s\+-\s\+//g')
           
+          # Check if storage:link is in post-deploy commands
+          STORAGE_LINK_CMD=$(grep -A 100 "post_deploy:" gs_develop/config/deploy.yml | grep -v "post_deploy:" | grep -E "storage:link")
+          
           echo "Setting up shared files and directories..."
           echo "Shared files/directories from config:"
           echo "$SHARED_FILES"
@@ -370,14 +373,23 @@ jobs:
           # Process each shared file/directory
           echo "$SHARED_FILES" | while read -r FILE; do
             if [ -n "$FILE" ]; then
+              # Remove any trailing slashes for consistency
+              FILE=${FILE%/}
+              
               echo "Processing shared item: $FILE"
+              
+              # Skip public/storage if storage:link is in post-deploy commands
+              if [ "$FILE" == "public/storage" ] && [ -n "$STORAGE_LINK_CMD" ]; then
+                echo "Skipping public/storage as storage:link will be run in post-deploy"
+                continue
+              fi
               
               # Create directory structure in shared if it doesn't exist
               DIR_PATH=$(dirname "$FILE")
               ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${SHARED_PATH}/${DIR_PATH}"
               
               # Handle directory vs file differently
-              if [[ "$FILE" == */ ]] || [[ "$FILE" == "storage/app" ]] || [[ "$FILE" == "storage/logs" ]] || [[ "$FILE" == "storage/framework" ]]; then
+              if [[ "$FILE" == "storage/app" ]] || [[ "$FILE" == "storage/logs" ]] || [[ "$FILE" == "storage/framework" ]] || [[ "$FILE" =~ storage/framework/.+ ]]; then
                 # It's a directory - ensure it exists in shared
                 echo "Setting up directory: ${FILE}"
                 ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${SHARED_PATH}/${FILE}"
