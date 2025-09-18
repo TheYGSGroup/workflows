@@ -488,7 +488,7 @@ jobs:
           echo "$POST_DEPLOY"
           
           # Run each command individually
-          while IFS= read -r CMD; do
+          echo "$POST_DEPLOY" | while read -r CMD; do
             if [ -n "$CMD" ]; then
               echo "Running command: $CMD"
               ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && $CMD"
@@ -500,7 +500,7 @@ jobs:
                 echo "Warning: Command '$CMD' returned non-zero exit code, but continuing deployment"
               fi
             fi
-          done <<< "$POST_DEPLOY"
+          done
 
       - name: Update current symlink
         run: |
