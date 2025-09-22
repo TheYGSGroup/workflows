@@ -289,7 +289,7 @@ jobs:
           echo ".git" >> $EXCLUDE_FILE
           echo ".github" >> $EXCLUDE_FILE
           echo "node_modules" >> $EXCLUDE_FILE
-          echo "vendor/" >> $EXCLUDE_FILE
+          echo "/vendor/" >> $EXCLUDE_FILE
           echo "storage/framework" >> $EXCLUDE_FILE
           echo "storage/logs" >> $EXCLUDE_FILE
           echo "storage/app" >> $EXCLUDE_FILE
