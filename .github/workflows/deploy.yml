@@ -289,7 +289,7 @@ jobs:
           echo ".git" >> $EXCLUDE_FILE
           echo ".github" >> $EXCLUDE_FILE
           echo "node_modules" >> $EXCLUDE_FILE
-          echo "vendor" >> $EXCLUDE_FILE
+          echo "vendor/" >> $EXCLUDE_FILE
           echo "storage/framework" >> $EXCLUDE_FILE
           echo "storage/logs" >> $EXCLUDE_FILE
           echo "storage/app" >> $EXCLUDE_FILE
@@ -337,8 +337,13 @@ jobs:
           # Temporarily copy .env file from shared directory to build directory
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cp ${SHARED_PATH}/.env ${BUILD_PATH}/.env"
           
-          # Install Composer dependencies with --no-scripts to avoid running post-install scripts that might access the database
-          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts"
+          # Get version from composer.json if available
+          VERSION=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && grep -o '\"version\":[[:space:]]*\"[^\"]*\"' composer.json 2>/dev/null | cut -d'\"' -f4 || echo '1.0.0'")
+          
+          echo "Detected project version: $VERSION"
+          
+          # Install Composer dependencies with proper version
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && COMPOSER_ROOT_VERSION=$VERSION composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts"
           
           # Generate autoload files without running discovery
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && composer dump-autoload --optimize"
