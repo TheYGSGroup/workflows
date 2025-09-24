@@ -149,7 +149,21 @@ jobs:
       - name: Install basic tools
         run: |
           echo "Installing basic tools..."
-          apk add --no-cache bash git openssh-client rsync coreutils findutils grep wget
+          echo "Using SSH strategy: ${{ needs.detect_environment.outputs.ssh_setup_strategy }}"
+          echo "Container image: ${{ needs.detect_environment.outputs.container_image }}"
+          
+          # Install tools based on detected strategy/container
+          if [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "alpine_compatible" ]; then
+            echo "Installing tools for Alpine Linux..."
+            apk add --no-cache bash git openssh-client rsync coreutils findutils grep wget
+          elif [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "debian_standard" ]; then
+            echo "Installing tools for Debian/Ubuntu..."
+            apt-get update && apt-get install -y bash git openssh-client rsync coreutils findutils grep wget
+          else
+            echo "Unknown strategy, attempting both package managers..."
+            apk add --no-cache bash git openssh-client rsync coreutils findutils grep wget || \
+            (apt-get update && apt-get install -y bash git openssh-client rsync coreutils findutils grep wget)
+          fi
           
           # Install yq for YAML parsing
           echo "Installing yq for YAML parsing..."
