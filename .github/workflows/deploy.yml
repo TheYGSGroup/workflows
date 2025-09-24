@@ -443,6 +443,7 @@ jobs:
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $RELEASE_PATH && cp -R $BUILD_PATH/* $RELEASE_PATH/"
 
       - name: Setup shared files and directories
+        shell: bash
         run: |
           HOST="${{ secrets.HOST }}"
           USER="${{ secrets.USER }}"
@@ -481,7 +482,7 @@ jobs:
               echo "Processing shared item $i of $LINE_COUNT: $FILE"
               
               # Skip public/storage if storage:link is in post-deploy commands
-              if [ "$FILE" == "public/storage" ] && [ -n "$STORAGE_LINK_CMD" ]; then
+              if [ "$FILE" = "public/storage" ] && [ -n "$STORAGE_LINK_CMD" ]; then
                 echo "Skipping public/storage as storage:link will be run in post-deploy"
                 continue
               fi
@@ -491,7 +492,7 @@ jobs:
               ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${SHARED_PATH}/${DIR_PATH}"
               
               # Handle directory vs file differently
-              if [[ "$FILE" == "storage/app" ]] || [[ "$FILE" == "storage/logs" ]] || [[ "$FILE" == "storage/framework" ]] || [[ "$FILE" =~ storage/framework/.+ ]]; then
+              if [[ "$FILE" == "storage/app" ]] || [[ "$FILE" == "storage/logs" ]] || [[ "$FILE" == "storage/framework" ]] || [[ "$FILE" =~ ^storage/framework/.+ ]]; then
                 # It's a directory - ensure it exists in shared
                 echo "Setting up directory: ${FILE}"
                 ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${SHARED_PATH}/${FILE}"
@@ -514,13 +515,13 @@ jobs:
                 SHARED_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -e ${SHARED_PATH}/${FILE} ]; then echo 'exists'; else echo 'missing'; fi")
                 
                 # Remove the file from release if it exists (we'll create a symlink)
-                if [ "$FILE_EXISTS" == "exists" ]; then
+                if [ "$FILE_EXISTS" = "exists" ]; then
                   ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${RELEASE_PATH}/${FILE}"
                 fi
                 
                 # Handle file creation in shared directory
-                if [ "$SHARED_EXISTS" == "missing" ]; then
-                  if [ "$FILE_EXISTS" == "exists" ]; then
+                if [ "$SHARED_EXISTS" = "missing" ]; then
+                  if [ "$FILE_EXISTS" = "exists" ]; then
                     # Copy from release to shared if it existed in release
                     echo "Copying ${FILE} from release to shared directory"
                     ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cp -R ${RELEASE_PATH}/${FILE} ${SHARED_PATH}/${FILE} || true"
@@ -555,15 +556,16 @@ jobs:
           # Double-check storage/app symlink
           STORAGE_APP_CHECK=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -L ${RELEASE_PATH}/storage/app ]; then echo 'symlink'; elif [ -d ${RELEASE_PATH}/storage/app ]; then echo 'directory'; else echo 'missing'; fi")
           
-          if [ "$STORAGE_APP_CHECK" == "missing" ]; then
+          if [ "$STORAGE_APP_CHECK" = "missing" ]; then
             echo "storage/app is missing, creating symlink..."
             ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${RELEASE_PATH}/storage && ln -sfn ${SHARED_PATH}/storage/app ${RELEASE_PATH}/storage/app"
-          elif [ "$STORAGE_APP_CHECK" == "directory" ]; then
+          elif [ "$STORAGE_APP_CHECK" = "directory" ]; then
             echo "storage/app is a directory, replacing with symlink..."
             ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "rm -rf ${RELEASE_PATH}/storage/app && ln -sfn ${SHARED_PATH}/storage/app ${RELEASE_PATH}/storage/app"
           fi
 
       - name: Check and generate APP_KEY if needed
+        shell: bash
         run: |
           HOST="${{ secrets.HOST }}"
           USER="${{ secrets.USER }}"
@@ -574,7 +576,7 @@ jobs:
           # Check if APP_KEY exists in .env
           APP_KEY_CHECK=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "grep -E '^APP_KEY=' ${SHARED_PATH}/.env | grep -v 'APP_KEY=$' | grep -v 'APP_KEY=base64:' || echo 'missing'")
           
-          if [ "$APP_KEY_CHECK" == "missing" ]; then
+          if [ "$APP_KEY_CHECK" = "missing" ]; then
             echo "APP_KEY not found or empty, generating new key"
             ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && php artisan key:generate --force"
           else
@@ -582,6 +584,7 @@ jobs:
           fi
 
       - name: Run post-deployment commands
+        shell: bash
         run: |
           HOST="${{ secrets.HOST }}"
           USER="${{ secrets.USER }}"
