@@ -87,12 +87,57 @@ jobs:
             fi
           fi
 
+  detect_environment:
+    name: Detect optimal deployment environment
+    runs-on: ubuntu-latest
+    outputs:
+      container_image: ${{ steps.detect.outputs.container_image }}
+      ssh_setup_strategy: ${{ steps.detect.outputs.ssh_setup_strategy }}
+      runner_info: ${{ steps.detect.outputs.runner_info }}
+    
+    steps:
+      - name: Detect optimal container and SSH strategy
+        id: detect
+        run: |
+          echo "Detecting optimal deployment environment..."
+          
+          # Get runner information
+          echo "Runner OS: $RUNNER_OS"
+          echo "Runner architecture: $RUNNER_ARCH"
+          echo "GitHub Actions runner image: $ImageOS"
+          
+          # Detect optimal container image based on compatibility
+          CONTAINER_IMAGE="node:20-alpine"
+          SSH_STRATEGY="alpine_compatible"
+          
+          # Check if we're on GitHub's latest runners which might have different OpenSSL
+          if [[ "$ImageOS" == *"ubuntu22"* ]] || [[ "$ImageOS" == *"ubuntu24"* ]]; then
+            echo "Detected newer Ubuntu runner, using more compatible container"
+            CONTAINER_IMAGE="node:20-bullseye"
+            SSH_STRATEGY="debian_standard"
+          fi
+          
+          # For maximum compatibility, we could also use ubuntu-based container
+          if [[ "$RUNNER_ARCH" == "ARM64" ]]; then
+            echo "Detected ARM64 architecture, adjusting container selection"
+            CONTAINER_IMAGE="node:20-bullseye"
+            SSH_STRATEGY="debian_standard"
+          fi
+          
+          echo "Selected container image: $CONTAINER_IMAGE"
+          echo "Selected SSH strategy: $SSH_STRATEGY"
+          
+          # Set outputs
+          echo "container_image=$CONTAINER_IMAGE" >> $GITHUB_OUTPUT
+          echo "ssh_setup_strategy=$SSH_STRATEGY" >> $GITHUB_OUTPUT
+          echo "runner_info=$ImageOS-$RUNNER_ARCH" >> $GITHUB_OUTPUT
+
   deploy:
     name: Deploy to ${{ needs.check_branch.outputs.environment }}
     runs-on: ubuntu-latest
     container: 
-      image: node:20-alpine
-    needs: check_branch
+      image: ${{ needs.detect_environment.outputs.container_image }}
+    needs: [check_branch, detect_environment]
     if: needs.check_branch.outputs.should_deploy == 'true'
     
     steps:
@@ -177,6 +222,27 @@ jobs:
       - name: Setup SSH
         run: |
           echo "Setting up SSH..."
+          echo "Using SSH strategy: ${{ needs.detect_environment.outputs.ssh_setup_strategy }}"
+          echo "Container image: ${{ needs.detect_environment.outputs.container_image }}"
+          echo "Runner info: ${{ needs.detect_environment.outputs.runner_info }}"
+          
+          # Setup SSH based on detected strategy
+          if [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "alpine_compatible" ]; then
+            echo "Setting up SSH for Alpine Linux..."
+            # Update Alpine packages to fix OpenSSL version mismatch
+            apk update && apk upgrade
+            # Install or update openssh-client to ensure compatibility
+            apk add --update openssh-client
+          elif [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "debian_standard" ]; then
+            echo "Setting up SSH for Debian/Ubuntu..."
+            # Update package list and install openssh-client
+            apt-get update && apt-get install -y openssh-client
+          else
+            echo "Unknown SSH strategy, attempting Alpine setup as fallback..."
+            apk update && apk upgrade && apk add --update openssh-client || \
+            (apt-get update && apt-get install -y openssh-client)
+          fi
+          
           # Create SSH directory in the container's home directory
           mkdir -p /home/node/.ssh
           
