@@ -627,6 +627,89 @@ jobs:
             fi
           done
 
+      - name: Database backup
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          ENVIRONMENT="${{ needs.check_branch.outputs.environment }}"
+          BASE_PATH="${{ secrets.PATH }}"
+          
+          # Determine the backup environment parameter based on the deployment environment
+          if [ "$ENVIRONMENT" == "staging" ]; then
+            BACKUP_ENV="staging"
+          elif [ "$ENVIRONMENT" == "development" ]; then
+            BACKUP_ENV="development"
+          else
+            # For production or other environments, skip backup
+            echo "Skipping database backup for environment: $ENVIRONMENT"
+            exit 0
+          fi
+          
+          echo "Creating database backup for environment: $BACKUP_ENV"
+          
+          # Execute the backup script from the deployment project root
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BASE_PATH && /bin/bash ./ygs_dev.sh db:backup $BACKUP_ENV"
+          
+          echo "Database backup completed successfully"
+
+      - name: Verify database backup
+        run: |
+          HOST="${{ secrets.HOST }}"
+          USER="${{ secrets.USER }}"
+          PORT="${{ secrets.PORT || 22 }}"
+          ENVIRONMENT="${{ needs.check_branch.outputs.environment }}"
+          BASE_PATH="${{ secrets.PATH }}"
+          BACKUP_PATH="${BASE_PATH}/backups"
+          
+          # Skip verification for environments that don't require backup
+          if [ "$ENVIRONMENT" != "staging" ] && [ "$ENVIRONMENT" != "development" ]; then
+            echo "Skipping backup verification for environment: $ENVIRONMENT"
+            exit 0
+          fi
+          
+          echo "Verifying database backup was created successfully"
+          
+          # Check if backups directory exists
+          BACKUP_DIR_EXISTS=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "if [ -d $BACKUP_PATH ]; then echo 'exists'; else echo 'missing'; fi")
+          
+          if [ "$BACKUP_DIR_EXISTS" == "missing" ]; then
+            echo "::error::Backup directory $BACKUP_PATH does not exist"
+            exit 1
+          fi
+          
+          # Get the latest backup file matching the expected pattern
+          # Pattern: <env>_<mm_dd_yyyy>_<release_number>.sql
+          LATEST_BACKUP=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "ls -t $BACKUP_PATH/${ENVIRONMENT}_*.sql 2>/dev/null | head -1")
+          
+          if [ -z "$LATEST_BACKUP" ]; then
+            echo "::error::No backup file found for environment $ENVIRONMENT in $BACKUP_PATH"
+            echo "Expected pattern: ${ENVIRONMENT}_mm_dd_yyyy_release_number.sql"
+            exit 1
+          fi
+          
+          # Extract backup filename without path for display
+          BACKUP_FILENAME=$(basename "$LATEST_BACKUP")
+          echo "Found backup file: $BACKUP_FILENAME"
+          
+          # Check if the backup file is recent (created within the last 5 minutes)
+          BACKUP_AGE=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "find $BACKUP_PATH -name '$BACKUP_FILENAME' -mmin -5")
+          
+          if [ -z "$BACKUP_AGE" ]; then
+            echo "::error::Backup file $BACKUP_FILENAME is not recent (older than 5 minutes)"
+            exit 1
+          fi
+          
+          # Check file size to ensure it's not empty
+          BACKUP_SIZE=$(ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "stat -c%s '$LATEST_BACKUP'")
+          
+          if [ "$BACKUP_SIZE" -eq 0 ]; then
+            echo "::error::Backup file $BACKUP_FILENAME is empty"
+            exit 1
+          fi
+          
+          echo "Backup verification successful: $BACKUP_FILENAME (${BACKUP_SIZE} bytes)"
+
       - name: Update current symlink
         run: |
           HOST="${{ secrets.HOST }}"
