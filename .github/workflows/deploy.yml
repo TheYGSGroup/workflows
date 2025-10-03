@@ -635,16 +635,9 @@ jobs:
           ENVIRONMENT="${{ needs.check_branch.outputs.environment }}"
           BASE_PATH="${{ secrets.PATH }}"
           
-          # Determine the backup environment parameter based on the deployment environment
-          if [ "$ENVIRONMENT" = "staging" ]; then
-            BACKUP_ENV="staging"
-          elif [ "$ENVIRONMENT" = "development" ]; then
-            BACKUP_ENV="development"
-          else
-            # For production or other environments, skip backup
-            echo "Skipping database backup for environment: $ENVIRONMENT"
-            exit 0
-          fi
+          # Use branch name as the backup environment parameter
+          BRANCH_NAME="${{ needs.check_branch.outputs.branch }}"
+          BACKUP_ENV="$BRANCH_NAME"
           
           echo "Creating database backup for environment: $BACKUP_ENV"
           
