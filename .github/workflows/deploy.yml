@@ -352,7 +352,7 @@ jobs:
           NEXT_RELEASE=$((LAST_RELEASE + 1))
           
           echo "number=$NEXT_RELEASE" >> $GITHUB_OUTPUT
-          echo "path=${RELEASES_PATH}/${NEXT_RELEASE}" >> $GITHUB_OUTPUT
+          echo "path=${RELEASES_PATH}/${NEXT_RELEASE}/codebase" >> $GITHUB_OUTPUT
           echo "Next release will be: $NEXT_RELEASE"
 
       - name: Deploy code to build directory
@@ -439,7 +439,7 @@ jobs:
           BUILD_PATH="${{ steps.setup_dirs.outputs.build_path }}"
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           
-          # Create release directory and copy build
+          # Create release directory and copy build to codebase subdirectory
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p $RELEASE_PATH && cp -R $BUILD_PATH/* $RELEASE_PATH/"
 
       - name: Setup shared files and directories
@@ -654,7 +654,7 @@ jobs:
           RELEASE_PATH="${{ steps.release.outputs.path }}"
           ENV_PATH="${{ steps.setup_dirs.outputs.env_path }}"
           
-          # Create or update the current/www symlink
+          # Create or update the current/www symlink (points to codebase directory)
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "mkdir -p ${ENV_PATH}/current && ln -sfn $RELEASE_PATH ${ENV_PATH}/current/www"
           
           # Try to set ownership on the public directory (non-recursive) but continue on error
