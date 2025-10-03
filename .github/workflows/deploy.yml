@@ -642,7 +642,7 @@ jobs:
           echo "Creating database backup for environment: $BACKUP_ENV"
           
           # Execute the backup script from the deployment project root
-          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BASE_PATH && /bin/bash ./ygs_dev.sh db:backup $BACKUP_ENV"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BASE_PATH && /bin/bash ./ygs_dev.sh db:backup $BACKUP_ENV --without-prompt"
           
           echo "Database backup completed successfully"
 
