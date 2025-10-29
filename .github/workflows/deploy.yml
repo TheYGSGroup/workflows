@@ -578,7 +578,7 @@ jobs:
           
           if [ "$APP_KEY_CHECK" = "missing" ]; then
             echo "APP_KEY not found or empty, generating new key"
-            ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && php artisan key:generate --force"
+            ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $RELEASE_PATH && /usr/local/bin/ea-php83 artisan key:generate --force"
           else
             echo "APP_KEY already exists in .env file"
           fi
