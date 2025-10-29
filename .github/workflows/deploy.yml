@@ -423,10 +423,10 @@ jobs:
           echo "Detected project version: $VERSION"
           
           # Install Composer dependencies with proper version
-          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && COMPOSER_ROOT_VERSION=$VERSION composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && COMPOSER_ROOT_VERSION=$VERSION /usr/local/bin/ea-php8 /usr/local/bin/composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts"
           
           # Generate autoload files without running discovery
-          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && composer dump-autoload --optimize"
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && /usr/local/bin/ea-php8 /usr/local/bin/composer dump-autoload --optimize"
           
           # Skip npm build as we've already built the assets in the GitHub runner
           echo "Skipping npm build as assets were built in GitHub Actions"
