@@ -425,6 +425,10 @@ jobs:
           # Install Composer dependencies with proper version
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && COMPOSER_ROOT_VERSION=$VERSION /usr/local/bin/ea-php83 /usr/local/bin/composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts"
           
+          # Apply vendor patches (runs post-install script manually since --no-scripts was used)
+          echo "Applying vendor patches..."
+          ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && /usr/local/bin/ea-php83 scripts/apply-userviewresource-patch.php || echo 'Warning: Patch script failed, but continuing deployment'"
+          
           # Generate autoload files without running discovery
           ssh -i /home/node/.ssh/id_rsa -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $BUILD_PATH && /usr/local/bin/ea-php83 /usr/local/bin/composer dump-autoload --optimize"
           
