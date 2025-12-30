@@ -142,6 +142,9 @@ jobs:
           PLUGIN_MGMT_URL: ${{ secrets.PLUGIN_MGMT_URL || 'https://plugins.gregoryscottdev.com' }}
           DEPLOYMENT_API_KEY: ${{ secrets.DEPLOYMENT_API_KEY }}
         run: |
+          # Decode the JSON-escaped changelog (it's already a JSON string from the previous step)
+          CHANGELOG_RAW=$(echo "${{ steps.changelog.outputs.changelog }}" | jq -r .)
+          
           # Build JSON payload using jq to properly handle escaping
           JSON_PAYLOAD=$(jq -n \
             --arg name "${{ steps.plugin_info.outputs.name }}" \
@@ -149,7 +152,7 @@ jobs:
             --arg description "${{ steps.plugin_info.outputs.description }}" \
             --arg version "${{ steps.version.outputs.version }}" \
             --arg author "${{ steps.plugin_info.outputs.author }}" \
-            --arg changelog "${{ steps.changelog.outputs.changelog }}" \
+            --arg changelog "$CHANGELOG_RAW" \
             --arg file_path "plugins/${{ env.ZIP_NAME }}" \
             '{
               name: $name,
