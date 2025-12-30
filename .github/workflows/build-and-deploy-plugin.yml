@@ -141,9 +141,11 @@ jobs:
         env:
           PLUGIN_MGMT_URL: ${{ secrets.PLUGIN_MGMT_URL || 'https://plugins.gregoryscottdev.com' }}
           DEPLOYMENT_API_KEY: ${{ secrets.DEPLOYMENT_API_KEY }}
+          CHANGELOG_JSON: ${{ steps.changelog.outputs.changelog }}
         run: |
           # Decode the JSON-escaped changelog (it's already a JSON string from the previous step)
-          CHANGELOG_RAW=$(echo "${{ steps.changelog.outputs.changelog }}" | jq -r .)
+          # Use the environment variable to avoid bash parsing issues with quotes
+          CHANGELOG_RAW=$(echo "$CHANGELOG_JSON" | jq -r .)
           
           # Build JSON payload using jq to properly handle escaping
           JSON_PAYLOAD=$(jq -n \
