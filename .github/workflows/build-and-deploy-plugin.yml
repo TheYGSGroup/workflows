@@ -1,0 +1,200 @@
+name: Build and Deploy Plugin
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Plugin version (for manual triggers)'
+        required: false
+        type: string
+    secrets:
+      SSH_PRIVATE_KEY:
+        required: true
+      HOST:
+        required: true
+      USER:
+        required: true
+      PORT:
+        required: false
+      PLUGIN_MGMT_PATH:
+        required: true
+      PLUGIN_MGMT_URL:
+        required: false
+      DEPLOYMENT_API_KEY:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for changelog extraction
+      
+      - name: Extract version from tag or input
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building plugin version: $VERSION"
+      
+      - name: Read plugin.json
+        id: plugin_info
+        run: |
+          NAME=$(jq -r '.name' plugin.json)
+          TITLE=$(jq -r '.title' plugin.json)
+          DESCRIPTION=$(jq -r '.description' plugin.json)
+          AUTHOR=$(jq -r '.author' plugin.json)
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
+          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
+      
+      - name: Extract changelog for version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Extract changelog section for this version from CHANGELOG.md
+          if [ -f CHANGELOG.md ]; then
+            # Use awk to extract the section for this version
+            CHANGELOG=$(awk -v version="[$VERSION]" '
+              /^## \[/ { 
+                if ($0 ~ version) { 
+                  capture=1
+                  next
+                } else if (capture && /^## \[/) {
+                  exit
+                }
+              }
+              capture { 
+                if (/^## \[/) exit
+                print
+              }
+            ' CHANGELOG.md | sed 's/^## \[.*$//' | sed '/^$/d' | head -50)
+            
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="See CHANGELOG.md for details."
+            fi
+          else
+            CHANGELOG="No changelog available."
+          fi
+          
+          # Escape for JSON
+          CHANGELOG=$(echo "$CHANGELOG" | jq -Rs .)
+          echo "changelog=$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "Extracted changelog (first 100 chars): $(echo "$CHANGELOG" | head -c 100)"
+      
+      - name: Create plugin ZIP
+        run: |
+          ZIP_NAME="${{ steps.plugin_info.outputs.name }}-${{ steps.version.outputs.version }}.zip"
+          zip -r "$ZIP_NAME" . \
+            -x "*.git*" \
+            -x "*.github*" \
+            -x "*.DS_Store*" \
+            -x "node_modules/*" \
+            -x "vendor/*" \
+            -x "*.zip"
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          ls -lh "$ZIP_NAME"
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zip
+          path: ${{ env.ZIP_NAME }}
+          retention-days: 30
+      
+      - name: Deploy ZIP to Plugin Management Site
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.HOST }}
+          USER: ${{ secrets.USER }}
+          PORT: ${{ secrets.PORT || 22 }}
+          PLUGIN_MGMT_PATH: ${{ secrets.PLUGIN_MGMT_PATH }}
+        run: |
+          # Setup SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p $PORT $HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          # Transfer ZIP to plugin management site storage
+          PLUGIN_STORAGE_PATH="$PLUGIN_MGMT_PATH/sites/main/shared/storage/app/plugins"
+          ssh -p $PORT $USER@$HOST "mkdir -p $PLUGIN_STORAGE_PATH"
+          scp -P $PORT "${{ env.ZIP_NAME }}" $USER@$HOST:$PLUGIN_STORAGE_PATH/
+          
+          echo "✅ Plugin ZIP deployed to: $PLUGIN_STORAGE_PATH/${{ env.ZIP_NAME }}"
+          echo "FILE_PATH=plugins/${{ env.ZIP_NAME }}" >> $GITHUB_ENV
+      
+      - name: Register plugin via API
+        env:
+          PLUGIN_MGMT_URL: ${{ secrets.PLUGIN_MGMT_URL || 'https://plugins.gregoryscottdev.com' }}
+          DEPLOYMENT_API_KEY: ${{ secrets.DEPLOYMENT_API_KEY }}
+        run: |
+          # Build JSON payload using jq to properly handle escaping
+          JSON_PAYLOAD=$(jq -n \
+            --arg name "${{ steps.plugin_info.outputs.name }}" \
+            --arg title "${{ steps.plugin_info.outputs.title }}" \
+            --arg description "${{ steps.plugin_info.outputs.description }}" \
+            --arg version "${{ steps.version.outputs.version }}" \
+            --arg author "${{ steps.plugin_info.outputs.author }}" \
+            --arg changelog "${{ steps.changelog.outputs.changelog }}" \
+            --arg file_path "plugins/${{ env.ZIP_NAME }}" \
+            '{
+              name: $name,
+              title: $title,
+              description: $description,
+              version: $version,
+              author: $author,
+              changelog: $changelog,
+              file_path: $file_path
+            }')
+          
+          # Call the deployment API
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "$PLUGIN_MGMT_URL/api/plugins/deploy" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $DEPLOYMENT_API_KEY" \
+            -d "$JSON_PAYLOAD")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          echo "API Response (HTTP $HTTP_CODE):"
+          echo "$BODY" | jq '.' || echo "$BODY"
+          
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ API call failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo "✅ Plugin registered successfully in plugin management site!"
+      
+      - name: Create GitHub Release
+        if: github.event_name != 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.ZIP_NAME }}
+          tag_name: ${{ github.ref }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Plugin Release ${{ steps.version.outputs.version }}
+            
+            **Plugin:** ${{ steps.plugin_info.outputs.name }}
+            **Version:** ${{ steps.version.outputs.version }}
+            
+            ### Installation
+            This plugin has been automatically deployed to the [Plugin Management Site](https://plugins.gregoryscottdev.com).
+            Download and install via the plugin management site or upload directly to your order-platform instance.
+            
+            ### Changes
+            ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+
