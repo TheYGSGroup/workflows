@@ -36,10 +36,15 @@ jobs:
       - name: Extract version from tag or input
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+          # Check if version was passed as input (for workflow_dispatch)
+          if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
-          else
+          # Otherwise, try to extract from git ref (for tag pushes)
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION=${GITHUB_REF#refs/tags/v}
+          # Fallback: try to get from latest tag
+          else
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building plugin version: $VERSION"
@@ -177,11 +182,11 @@ jobs:
           echo "✅ Plugin registered successfully in plugin management site!"
       
       - name: Create GitHub Release
-        if: github.event_name != 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ env.ZIP_NAME }}
-          tag_name: ${{ github.ref }}
+          tag_name: ${{ github.ref_name }}
           name: Release ${{ steps.version.outputs.version }}
           body: |
             ## Plugin Release ${{ steps.version.outputs.version }}
