@@ -153,16 +153,17 @@ jobs:
           echo "Container image: ${{ needs.detect_environment.outputs.container_image }}"
           
           # Install tools based on detected strategy/container
-          if [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "alpine_compatible" ]; then
+          if [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" = "alpine_compatible" ]; then
             echo "Installing tools for Alpine Linux..."
             apk add --no-cache bash git openssh-client rsync coreutils findutils grep wget
-          elif [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "debian_standard" ]; then
+          elif [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" = "debian_standard" ]; then
             echo "Installing tools for Debian/Ubuntu..."
-            apt-get update && apt-get install -y bash git openssh-client rsync coreutils findutils grep wget
+            apt-get update && apt-get install -y -o Acquire::Retries=3 bash git openssh-client rsync coreutils findutils grep wget || \
+            (echo "First attempt failed, retrying after apt-get update..." && sleep 5 && apt-get update && apt-get install -y -o Acquire::Retries=3 bash git openssh-client rsync coreutils findutils grep wget)
           else
             echo "Unknown strategy, attempting both package managers..."
             apk add --no-cache bash git openssh-client rsync coreutils findutils grep wget || \
-            (apt-get update && apt-get install -y bash git openssh-client rsync coreutils findutils grep wget)
+            (apt-get update && apt-get install -y -o Acquire::Retries=3 bash git openssh-client rsync coreutils findutils grep wget)
           fi
           
           # Install yq for YAML parsing
@@ -241,20 +242,21 @@ jobs:
           echo "Runner info: ${{ needs.detect_environment.outputs.runner_info }}"
           
           # Setup SSH based on detected strategy
-          if [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "alpine_compatible" ]; then
+          if [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" = "alpine_compatible" ]; then
             echo "Setting up SSH for Alpine Linux..."
             # Update Alpine packages to fix OpenSSL version mismatch
             apk update && apk upgrade
             # Install or update openssh-client to ensure compatibility
             apk add --update openssh-client
-          elif [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" == "debian_standard" ]; then
+          elif [ "${{ needs.detect_environment.outputs.ssh_setup_strategy }}" = "debian_standard" ]; then
             echo "Setting up SSH for Debian/Ubuntu..."
             # Update package list and install openssh-client
-            apt-get update && apt-get install -y openssh-client
+            apt-get update && apt-get install -y -o Acquire::Retries=3 openssh-client || \
+            (echo "First attempt failed, retrying after apt-get update..." && sleep 5 && apt-get update && apt-get install -y -o Acquire::Retries=3 openssh-client)
           else
             echo "Unknown SSH strategy, attempting Alpine setup as fallback..."
             apk update && apk upgrade && apk add --update openssh-client || \
-            (apt-get update && apt-get install -y openssh-client)
+            (apt-get update && apt-get install -y -o Acquire::Retries=3 openssh-client)
           fi
           
           # Create SSH directory in the container's home directory
